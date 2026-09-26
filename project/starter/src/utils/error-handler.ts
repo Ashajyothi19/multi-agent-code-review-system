@@ -67,16 +67,30 @@ export async function withRetry<T>(
   maxRetries: number = 3,
   delayMs: number = 1000
 ): Promise<T> {
-  // TODO: Implement retry logic with exponential backoff
-  // Hints:
-  // - Use a for loop from 1 to maxRetries
-  // - Use try/catch to catch errors
-  // - Calculate backoff: delayMs * Math.pow(2, attempt - 1)
-  // - Add jitter: Math.random() * 100
-  // - Use setTimeout wrapped in Promise for delay
-  // - Throw ReviewError with ErrorCodes.RETRY_EXHAUSTED if all retries fail
+  let lastError: unknown;
 
-  throw new Error('Not implemented');
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      // Only wait/retry if we have attempts remaining
+      if (attempt < maxRetries) {
+        const backoff = delayMs * Math.pow(2, attempt - 1);
+        const jitter = Math.random() * 100;
+        const waitMs = backoff + jitter;
+
+        await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      }
+    }
+  }
+
+  throw new ReviewError(
+    `Operation failed after ${maxRetries} attempt(s): ${formatError(lastError)}`,
+    ErrorCodes.RETRY_EXHAUSTED,
+    { maxRetries, lastError: formatError(lastError) }
+  );
 }
 
 /**
@@ -96,14 +110,21 @@ export async function withTimeout<T>(
   timeoutMs: number,
   errorMessage: string = 'Operation timed out'
 ): Promise<T> {
-  // TODO: Implement timeout wrapper using Promise.race
-  // Hints:
-  // - Use Promise.race to race fn() against a timeout promise
-  // - The timeout promise should reject after timeoutMs milliseconds
-  // - Throw ReviewError with ErrorCodes.AGENT_TIMEOUT on timeout
-  // - Include timeoutMs in metadata
+  let timeoutHandle: ReturnType<typeof setTimeout>;
 
-  throw new Error('Not implemented');
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(
+        new ReviewError(errorMessage, ErrorCodes.AGENT_TIMEOUT, { timeoutMs })
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fn(), timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutHandle!);
+  }
 }
 
 /**
